@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual env
+venv/
+.env/
+
+# Data & models (根据需要调)
+data/processed/
+experiments/models/
+experiments/logs/
+
+# OS
+.DS_Store
+Thumbs.db

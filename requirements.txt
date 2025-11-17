@@ -1,0 +1,10 @@
+numpy
+pandas
+scikit-learn
+gensim
+matplotlib
+seaborn
+transformers
+datasets
+accelerate
+torch
