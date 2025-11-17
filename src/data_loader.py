@@ -4,14 +4,24 @@ from typing import List, Tuple
 
 import pandas as pd
 
+# === 路径设置：以当前文件为基准，自动找到项目根目录 ===
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
 
-def read_title_lines(path: str, encoding: str = "utf-8") -> List[str]:
+# === 根据你的实际 Excel 列名修改这里（重要） ===
+# 先猜一个，等会儿我们会打印列名给你看
+TEST_EXCEL_FILENAME = "testSet-1000.xlsx"
+TEST_TITLE_COL = "title given by manchine"   # TODO: 改成你 testSet 里“标题”的列名
+TEST_LABEL_COL = "Y/N"   # TODO: 改成你 testSet 里“标签”的列名
+
+
+def read_title_lines(path: str, encoding: str = "gb18030") -> List[str]:
     """
     读取“每行一个标题”的纯文本文件。
-    如果你的文件不是 utf-8，可以把 encoding 参数改成 'gbk' 等。
+    用 gb18030 是为了兼容 Windows/中文环境导出的文件。
     """
     titles = []
-    with open(path, "r", encoding=encoding) as f:
+    with open(path, "r", encoding=encoding, errors="ignore") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -20,52 +30,83 @@ def read_title_lines(path: str, encoding: str = "utf-8") -> List[str]:
     return titles
 
 
-def load_train_test_data(
-    data_dir: str = "data/raw",
-    test_title_col: str = "title",
-    test_label_col: str = "label",
-) -> Tuple[list, list, list, list]:
+def load_train_from_txt(data_dir: str = DATA_DIR) -> Tuple[list, list]:
     """
-    读取训练/测试数据并返回:
-        X_train, y_train, X_test, y_test
-
-    约定：
-    - 训练集：
-      - positive_trainingSet：每行一个“正类标题”（比如 label=1）
-      - negative_trainingSet：每行一个“负类标题”（比如 label=0）
-    - 测试集 testSet.xlsx：
-      - 里边有一个标题列，如 'title'
-      - 有一个标签列，如 'label'，值为 0/1 或类似
-
-    如果 testSet.xlsx 里的列名不是 title/label，
-    你只需要在调用时改一下 test_title_col / test_label_col，
-    或者在这里把默认值改掉即可。
+    只从 positive_trainingSet / negative_trainingSet 读取训练数据。
+    返回: X(标题列表), y(标签列表)
     """
-
-    # === 1) 构造文件路径 ===
     pos_path = os.path.join(data_dir, "positive_trainingSet")
     neg_path = os.path.join(data_dir, "negative_trainingSet")
-    test_path = os.path.join(data_dir, "testSet.xlsx")
 
-    # === 2) 读取训练集（每行一个标题） ===
-    # 如果编码报错，可以把 encoding 改成 'gbk' 或你实际的编码
-    X_pos = read_title_lines(pos_path, encoding="utf-8")
-    X_neg = read_title_lines(neg_path, encoding="utf-8")
+    if not os.path.exists(pos_path):
+        raise FileNotFoundError(f"未找到正类文件: {pos_path}")
+    if not os.path.exists(neg_path):
+        raise FileNotFoundError(f"未找到负类文件: {neg_path}")
 
-    X_train = X_pos + X_neg
-    y_train = [1] * len(X_pos) + [0] * len(X_neg)  # 1 = 正类, 0 = 负类
+    X_pos = read_title_lines(pos_path, encoding="gb18030")
+    X_neg = read_title_lines(neg_path, encoding="gb18030")
 
-    # === 3) 读取测试集（Excel 格式） ===
-    # 先把整个表读出来
+    X = X_pos + X_neg
+    y = [1] * len(X_pos) + [0] * len(X_neg)  # 1 = 正类, 0 = 负类
+
+    print(f"[INFO] 正类样本数: {len(X_pos)}, 负类样本数: {len(X_neg)}, 总数: {len(X)}")
+    return X, y
+
+
+def _map_labels(raw_series) -> list:
+    """
+    把 testSet 里的标签映射成 0/1。
+    这里先尝试直接转 int，如果失败，就按常见字符串映射。
+    你可以根据自己 Excel 的实际取值来改。
+    """
+    try:
+        return raw_series.astype(int).tolist()
+    except Exception:
+        # 如果不是数字，比如 'pos'/'neg'、'correct'/'wrong' 等
+        mapping_pos = {"pos", "positive", "clean", "correct", "1", 1, "y", "yes"}
+        mapping_neg = {"neg", "negative", "noisy", "wrong", "0", 0, "n", "no"}
+
+        labels = []
+        for v in raw_series:
+            if isinstance(v, str):
+                v_norm = v.strip().lower()
+            else:
+                v_norm = str(v).strip().lower()
+
+            if v_norm in mapping_pos:
+                labels.append(1)
+            elif v_norm in mapping_neg:
+                labels.append(0)
+            else:
+                # 实在识别不了的先当负类，也可以 raise 出来调试
+                # 你可以在这里 print(v) 看看是啥奇怪标签
+                labels.append(0)
+        return labels
+
+
+def load_train_test_data(
+    data_dir: str = DATA_DIR,
+    test_title_col: str = TEST_TITLE_COL,
+    test_label_col: str = TEST_LABEL_COL,
+) -> Tuple[list, list, list, list]:
+    """
+    读取完整训练集 + 测试集：
+    - 训练：来自 positive_trainingSet / negative_trainingSet
+    - 测试：来自 testSet.xlsx（带标题和标签）
+
+    返回: X_train, y_train, X_test, y_test
+    """
+    # 1) 训练数据
+    X_train, y_train = load_train_from_txt(data_dir=data_dir)
+
+    # 2) 测试数据（Excel）
+    test_path = os.path.join(data_dir, TEST_EXCEL_FILENAME)
+    if not os.path.exists(test_path):
+        raise FileNotFoundError(f"未找到测试集 Excel 文件: {test_path}")
+
     df = pd.read_excel(test_path)
+    print("[INFO] testSet.xlsx 列名:", list(df.columns))
 
-    # 打印一下列名，帮你确认（只在你直接运行本文件时会触发）
-    print("Columns in testSet.xlsx:", list(df.columns))
-
-    # 根据列名取出标题和标签
-    # 默认假设有 'title' 和 'label' 两列
-    # 如果你的实际列名不同，比如 'Title'/'Label' 或 'text'/'y'，
-    # 就把 test_title_col / test_label_col 改成对应名字。
     if test_title_col not in df.columns or test_label_col not in df.columns:
         raise ValueError(
             f"找不到指定列: title_col={test_title_col}, label_col={test_label_col}，"
@@ -73,27 +114,15 @@ def load_train_test_data(
         )
 
     X_test = df[test_title_col].astype(str).tolist()
+    y_test = _map_labels(df[test_label_col])
 
-    # 标签如果不是 0/1，可以在这里做一个映射
-    y_raw = df[test_label_col]
-    # 尝试转成 int，如果失败你再改这里的逻辑
-    try:
-        y_test = y_raw.astype(int).tolist()
-    except ValueError:
-        # 例如标签是 'pos'/'neg' 之类，可以改成：
-        # y_test = [1 if v == 'pos' else 0 for v in y_raw]
-        raise ValueError(
-            f"标签列无法直接转为 int，请检查 testSet.xlsx 中 '{test_label_col}' 的取值，"
-            "并在 data_loader.py 中自定义映射逻辑。"
-        )
-
+    print(f"[INFO] 测试集样本数: {len(X_test)}")
     return X_train, y_train, X_test, y_test
 
 
 if __name__ == "__main__":
-    # 简单测试一下能不能正常读数据
+    # 用来检查数据是否能正确加载
     X_train, y_train, X_test, y_test = load_train_test_data()
-
-    print(f"Train: {len(X_train)} samples, Test: {len(X_test)} samples")
-    print("Train sample:", X_train[0] if X_train else "N/A")
-    print("Test sample:", X_test[0] if X_test else "N/A", "Label:", y_test[0] if y_test else "N/A")
+    print(f"[CHECK] 训练集: {len(X_train)} 条, 测试集: {len(X_test)} 条")
+    print("[CHECK] 训练样本示例:", X_train[0] if X_train else "N/A")
+    print("[CHECK] 测试样本示例:", X_test[0] if X_test else "N/A", "标签:", y_test[0] if X_test else "N/A")
