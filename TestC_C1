@@ -1,0 +1,46 @@
+from itertools import batched
+
+import numpy as np
+import torch
+from torch import device
+
+from src.data_loader import load_train_test_data
+X_train_text,y_train,X_test_text,y_test = load_train_test_data()
+
+from transformers import AutoTokenizer, AutoModel
+
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+model = AutoModel.from_pretrained("bert-base-uncased")
+model.eval()
+
+def encode_titles(texts,batch_size=64):
+    all_vecs =[]
+    for batch in batched(texts, batch_size):
+        enc = tokenizer(
+            batch,
+            padding=True,
+            truncation=True,
+            max_length = 64,
+            return_tensors="pt"
+        ).to(device)#参数待议
+
+        with torch.no_grad():
+            outputs = model(**enc)
+
+        cls_vec = outputs.last_hidden_state[:, 0, :]
+
+        all_vecs.append(cls_vec.cpu().numpy())
+    return np.concatenate(all_vecs,axis = 0)
+
+from sklearn.svm import LinearSVC
+from sklearn.metrics import classification_report, confusion_matrix
+
+X_train_vec =encode_titles(X_train_text)
+X_test_vec =encode_titles(X_test_text)
+
+clf = LinearSVC()
+clf.fit(X_train_vec,y_train)
+y_pred = clf.predict(X_test_vec)
+
+print(classification_report(y_test,y_pred, digits=4))
+print(confusion_matrix(y_test,y_pred))
